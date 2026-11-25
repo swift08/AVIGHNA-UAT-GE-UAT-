@@ -54,6 +54,7 @@ import { Navigate, useNavigate, useRouterState } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { SearchableSelect } from "@/components/ui/searchable-select";
+import { SalesCustomerReceivables } from "@/components/sales-customer-receivables";
 import {
   Sheet,
   SheetContent,
@@ -232,10 +233,10 @@ export function ModuleWorkspace({
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("All statuses");
   const [tab, setTab] = useState("Overview");
-  // Payment collectors (sales) can see due/collection amounts on Accounts only.
+  // Payment collectors (sales) can see due/collection amounts on Accounts & Customers.
   const canViewAmounts =
     hasPermission("finance.view_amounts") ||
-    (module === "accounts" && hasPermission("payments.record"));
+    ((module === "accounts" || module === "customers") && hasPermission("payments.record"));
   const money = (value: number) => (canViewAmounts ? moneyFormat(value) : "—");
   const canGenerateInvoices = hasPermission("invoices.generate");
   const isSalesCollector =
@@ -680,6 +681,7 @@ export function ModuleWorkspace({
   const [payMethod, setPayMethod] = useState<"Bank Transfer" | "Cheque" | "Cash" | "UPI">(
     "Bank Transfer",
   );
+  const [payDate, setPayDate] = useState(() => new Date().toISOString().split("T")[0] || "");
   const [payRef, setPayRef] = useState("TXN-98231");
 
   // Fleet management state
@@ -2611,18 +2613,25 @@ export function ModuleWorkspace({
       toast.error("Required fields missing", { description: requiredError });
       return;
     }
+    const isOnline = payMethod === "Bank Transfer" || payMethod === "UPI";
+    const refParts = [
+      isOnline || payMethod === "Cheque" ? payRef.trim() : "",
+      payDate ? `Date: ${payDate}` : "",
+    ].filter(Boolean);
     await recordPayment({
       invoiceId: selectedInvoiceForPayment.id,
       companyId: selectedInvoiceForPayment.company_id,
       customerId: selectedInvoiceForPayment.customer_id,
       amount,
       paymentMethod: payMethod,
-      referenceNumber: payRef,
-      recordedByName: "Suresh Rao (Accounts)",
+      referenceNumber: refParts.join(" · "),
+      recordedByName: currentUser?.name || "Accounts",
     });
     setPaymentModal(false);
     setSelectedInvoiceForPayment(null);
     setPayAmount("");
+    setPayRef("");
+    setPayDate(new Date().toISOString().split("T")[0] || "");
     reloadData();
   };
 
@@ -3811,6 +3820,27 @@ export function ModuleWorkspace({
         </>
       ) : module === "suppliers" ? (
         <SuppliersWorkspace supplierId={supplierId} />
+      ) : module === "customers" &&
+        !customerId &&
+        currentUser?.role === "sales" &&
+        hasPermission("payments.record") ? (
+        <SalesCustomerReceivables
+          customers={dbCustomers}
+          invoices={companyInvoices}
+          money={money}
+          onAddCustomer={hasPermission("customers.manage") ? () => setCustModal(true) : undefined}
+          onOpenProfile={(c) =>
+            navigate({
+              to: "/customers/$customerId",
+              params: { customerId: c.id || encodeURIComponent(c.name) },
+            })
+          }
+          onCollect={(inv) => {
+            setSelectedInvoiceForPayment(inv);
+            setPayAmount(String(inv.remaining_amount));
+            setPaymentModal(true);
+          }}
+        />
       ) : module === "customers" ? (
         customerId ? (
           loading && !selectedCustomerDetails ? (
@@ -7699,15 +7729,24 @@ export function ModuleWorkspace({
                 )}
 
                 {visitPurpose === "Order booking" && currentUser?.role === "sales" && (
-                  <div className="mt-2 p-3 rounded-xl border border-primary/25 bg-primary/[0.04] text-xs space-y-1.5 animate-in fade-in">
+                  <div className="mt-2 p-3 rounded-xl border border-primary/25 bg-primary/[0.04] text-xs space-y-2 animate-in fade-in">
                     <p className="font-bold text-foreground flex items-center gap-1.5">
                       <ShoppingBag className="size-3.5 text-primary" />
-                      Book order after visit
+                      Book order from this visit
                     </p>
                     <p className="text-[11px] text-muted-foreground leading-relaxed">
-                      Save this visit, then tap <strong>Create Order</strong> — only customer,
-                      product and quantity. Vehicle is assigned later.
+                      Customer, company, and notes will be pre-filled in the order form.
                     </p>
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={handleCreateOrderFromVisit}
+                      disabled={visitOrderSubmitting}
+                      className="w-full h-9 text-xs font-bold gap-1.5 cursor-pointer"
+                    >
+                      <ShoppingBag className="size-3.5" />
+                      Save visit &amp; create order
+                    </Button>
                   </div>
                 )}
 
@@ -8304,6 +8343,32 @@ export function ModuleWorkspace({
 
                 return (
                   <div className={`space-y-4 ${isSalesVisits ? "sales-visits-compact" : ""}`}>
+                    {isSalesVisits && (
+                      <div className="grid grid-cols-2 gap-3">
+                        <Button
+                          type="button"
+                          onClick={() => setTab("Log a visit")}
+                          className="h-14 gap-2 text-sm font-bold shadow-xs cursor-pointer"
+                        >
+                          <MapPin className="size-4 shrink-0" />
+                          Log Visit
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() =>
+                            navigateToCreateOrder({
+                              companyId: visitFirm || (company !== "all" ? company : undefined),
+                              customerName: visitSelectedCustomer || undefined,
+                            })
+                          }
+                          className="h-14 gap-2 text-sm font-bold shadow-xs cursor-pointer"
+                        >
+                          <ShoppingBag className="size-4 shrink-0" />
+                          Create Order
+                        </Button>
+                      </div>
+                    )}
                     {/* Summary KPIs — compact strip for sales */}
                     <div
                       className={
@@ -8373,7 +8438,7 @@ export function ModuleWorkspace({
                     <div className="space-y-3">
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                         <h3 className="text-sm font-bold text-foreground">Visits</h3>
-                        {canLogFieldVisit && (
+                        {canLogFieldVisit && !isSalesVisits && (
                           <Button
                             size="sm"
                             onClick={() => setTab("Log a visit")}
@@ -9310,8 +9375,8 @@ export function ModuleWorkspace({
                       options={dbProducts.map((p) => ({
                         value: p.name,
                         label: p.name,
-                        sublabel: [p.sku, p.category].filter(Boolean).join(" \u00b7 ") || undefined,
-                        keywords: `${p.name} ${p.sku || ""} ${p.category || ""}`,
+                        sublabel: [p.code, p.category].filter(Boolean).join(" \u00b7 ") || undefined,
+                        keywords: `${p.name} ${p.code || ""} ${p.category || ""}`,
                       }))}
                     />
                   </div>
@@ -12803,7 +12868,7 @@ export function ModuleWorkspace({
               />
             </label>
             <label className="drawer-field">
-              Payment Method
+              Mode of Payment
               <select
                 value={payMethod}
                 onChange={(e) =>
@@ -12817,13 +12882,35 @@ export function ModuleWorkspace({
               </select>
             </label>
             <label className="drawer-field">
-              Reference / Transaction ID
+              Date of Payment <span className="text-destructive">*</span>
               <input
-                value={payRef}
-                onChange={(e) => setPayRef(e.target.value)}
-                placeholder="TXN or Cheque Number"
+                type="date"
+                required
+                value={payDate}
+                onChange={(e) => setPayDate(e.target.value)}
               />
             </label>
+            {(payMethod === "Bank Transfer" || payMethod === "UPI") && (
+              <label className="drawer-field">
+                UTR Number <span className="text-destructive">*</span>
+                <input
+                  required
+                  value={payRef}
+                  onChange={(e) => setPayRef(e.target.value)}
+                  placeholder="Enter UTR / Transaction ID"
+                />
+              </label>
+            )}
+            {payMethod === "Cheque" && (
+              <label className="drawer-field">
+                Cheque Number
+                <input
+                  value={payRef}
+                  onChange={(e) => setPayRef(e.target.value)}
+                  placeholder="Enter Cheque Number"
+                />
+              </label>
+            )}
             <Button type="submit" className="w-full mt-6">
               Submit Payment Receipt
             </Button>

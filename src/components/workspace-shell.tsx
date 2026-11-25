@@ -96,13 +96,6 @@ export const navigation = [
       { name: "Leads", url: "/leads", icon: Users, perm: "leads.view" },
       { name: "Customers", url: "/customers", icon: Building2, perm: "customers.view" },
       { name: "Field visits", url: "/field-visits", icon: MapPin, perm: "field_visits.view" },
-      {
-        name: "Payments due",
-        url: "/accounts",
-        icon: CreditCard,
-        perm: "payments.record",
-        salesOnly: true,
-      },
     ],
   },
   {
@@ -712,13 +705,20 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
               {currentUser?.role === "sales" && hasPermission("field_visits.view") && (
                 <Link
                   to="/field-visits"
-                  className={`mobile-bottom-nav-item ${path === "/field-visits" ? "active" : ""}`}
+                  className={`mobile-bottom-nav-item ${
+                    path === "/field-visits" ||
+                    path.startsWith("/field-visits/") ||
+                    path === "/orders" ||
+                    path.startsWith("/orders/")
+                      ? "active"
+                      : ""
+                  }`}
                 >
                   <MapPin className="size-4" />
                   <span>Visits</span>
                 </Link>
               )}
-              {hasPermission("orders.view") && (
+              {currentUser?.role !== "sales" && hasPermission("orders.view") && (
                 <Link
                   to="/orders"
                   className={`mobile-bottom-nav-item ${path === "/orders" ? "active" : ""}`}
@@ -752,15 +752,6 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
                 >
                   <Building2 className="size-4" />
                   <span>Customers</span>
-                </Link>
-              )}
-              {currentUser.role === "sales" && hasPermission("payments.record") && (
-                <Link
-                  to="/accounts"
-                  className={`mobile-bottom-nav-item ${path === "/accounts" ? "active" : ""}`}
-                >
-                  <CreditCard className="size-4" />
-                  <span>Payments</span>
                 </Link>
               )}
             </>

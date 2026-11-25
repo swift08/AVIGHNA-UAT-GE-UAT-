@@ -16,8 +16,8 @@ dist-ssr
 .tanstack/**
 .nitro
 *.local
-# Env files (included for Vercel deployment)
-!.env
+# Env files (secrets stay local; set them in Vercel/host dashboard)
+.env
 !.env.production
 !.env.example
 
